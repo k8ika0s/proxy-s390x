@@ -179,6 +179,12 @@ defaults also add `--network=host` and preserve the fresh-builder cache
 (`KEEP_BUILDER_FRESH_CACHE=1`) to avoid known netavark veth and cache
 ownership issues. These remain overridable with explicit make vars.
 
+For `docker-tests` on s390x, defaults now include
+`--test_env=ENVOY_IP_TEST_VERSIONS=v4only` to avoid false negatives on
+builders where IPv6 loopback is unavailable inside Bazel test sandboxes.
+Override by setting `ENVOY_IP_TEST_VERSIONS=v4v6` (or by providing an explicit
+`--test_env=ENVOY_IP_TEST_VERSIONS=...` in `BAZEL_TEST_OPTS`).
+
 For `docker-tests` on s390x, the proxylib stage defaults to
 `PROXYLIB_BUILDER=$(BUILDER_BASE)` unless `PROXYLIB_BUILDER` is
 explicitly set, avoiding upstream builder digests that do not publish

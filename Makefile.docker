@@ -97,6 +97,15 @@ ifeq ($(ARCH),s390x)
   ifeq ($(filter command line environment,$(origin BAZEL_TEST_OPTS)),)
     BAZEL_TEST_OPTS := --jobs=1 --local_ram_resources=2048 --local_cpu_resources=1 --test_timeout=300 --local_test_jobs=1 --flaky_test_attempts=3 --test_output=errors
   endif
+  # Some zLinux builders run with IPv6 loopback unavailable inside Bazel test
+  # sandboxes, which makes Envoy integration cases fail on bind('[::1]:0').
+  # Keep s390x defaults v4-only unless caller explicitly sets the test env.
+  ENVOY_IP_TEST_VERSIONS ?= v4only
+  ifneq ($(strip $(ENVOY_IP_TEST_VERSIONS)),)
+    ifeq ($(filter --test_env=ENVOY_IP_TEST_VERSIONS=%,$(BAZEL_TEST_OPTS)),)
+      override BAZEL_TEST_OPTS += --test_env=ENVOY_IP_TEST_VERSIONS=$(ENVOY_IP_TEST_VERSIONS)
+    endif
+  endif
   # Iteration mode defaults for zLinux:
   # - avoid forcing Cargo lock repin on every build
   # - scope tests to known failing TLS/regression targets unless overridden
