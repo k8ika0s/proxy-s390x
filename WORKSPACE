@@ -44,6 +44,12 @@ git_repository(
         "@//patches:0005-http-header-expose-attribute.patch",
         "@//patches:0006-build-Fix-arm-build-for-liburing.patch",
         "@//patches:0007-Add-latomic-back-for-arm-build.patch",
+        "@//patches:0008-bazel-Wire-boringssl-s390x-target-patch.patch",
+        "@//patches:0009-bazel-absl-clang-s390x-int128-fallback.patch",
+        "@//patches:0010-bazel-quiche-s390x-big-endian-send-buffer-fallback.patch",
+        "@//patches:0011-bazel-aws-lc-s390x-local-toolchain-nonfips.patch",
+        "@//patches:0012-bazel-route-s390x-fips-to-aws-lc.patch",
+        "@//patches:0013-bazel-envoy-guard-fips-compliance-policy-for-nonfips.patch",
     ],
     # // clang-format off: Envoy's format check: Only repository_locations.bzl may contains URL references
     remote = "https://github.com/envoyproxy/envoy.git",

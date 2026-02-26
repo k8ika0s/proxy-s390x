@@ -1,0 +1,62 @@
+diff --git a/bazel/repositories.bzl b/bazel/repositories.bzl
+--- a/bazel/repositories.bzl
++++ b/bazel/repositories.bzl
+@@ -799,9 +799,11 @@ def _intel_ittapi():
+ 
+ def _com_github_google_quiche():
+     external_http_archive(
+         name = "com_github_google_quiche",
++        patch_args = ["-p1"],
++        patches = ["@envoy//bazel:quiche_s390x_big_endian.patch"],
+         patch_cmds = ["find quiche/ -type f -name \"*.bazel\" -delete"],
+         build_file = "@envoy//bazel/external:quiche.BUILD",
+     )
+ 
+ def _googleurl():
+diff --git a/bazel/quiche_s390x_big_endian.patch b/bazel/quiche_s390x_big_endian.patch
+new file mode 100644
+--- /dev/null
++++ b/bazel/quiche_s390x_big_endian.patch
+@@ -0,0 +1,42 @@
++diff --git a/quiche/quic/core/quic_inlined_string_view.h b/quiche/quic/core/quic_inlined_string_view.h
++--- a/quiche/quic/core/quic_inlined_string_view.h
+++++ b/quiche/quic/core/quic_inlined_string_view.h
++@@ -113,7 +113,9 @@ class QUICHE_NO_EXPORT QuicInlinedStringView {
++     size_t size;
++   };
++   static_assert(sizeof(ViewRep) <= kSize);
+++#if !defined(__BYTE_ORDER__) || (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
++   static_assert(absl::endian::native == absl::endian::little);
+++#endif
++
++   // Accessors for ViewRep; necessary to work around C++ strict aliasing
++   // limitations.  Clang will turn this into direct field access at `-O1`.
++diff --git a/quiche/quic/core/quic_stream.cc b/quiche/quic/core/quic_stream.cc
++--- a/quiche/quic/core/quic_stream.cc
+++++ b/quiche/quic/core/quic_stream.cc
++@@ -133,10 +133,23 @@ std::unique_ptr<QuicStreamSendBufferBase> CreateSendBuffer(
++     QuicSession* session) {
++   quiche::QuicheBufferAllocator* allocator =
++       session->connection()->helper()->GetStreamSendBufferAllocator();
++-  if (GetQuicReloadableFlag(quic_use_inlining_send_buffer2)) {
+++  const bool use_inlining_send_buffer =
+++      GetQuicReloadableFlag(quic_use_inlining_send_buffer2);
+++
+++#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+++  // QuicInlinedStringView currently assumes little-endian layout for the
+++  // compact inlined representation; use the non-inlining implementation on
+++  // big-endian platforms (for example s390x) to preserve correctness.
+++  if (use_inlining_send_buffer) {
+++    QUIC_RELOADABLE_FLAG_COUNT(quic_use_inlining_send_buffer2);
+++  }
+++  return std::make_unique<QuicStreamSendBuffer>(allocator);
+++#else
+++  if (use_inlining_send_buffer) {
++     QUIC_RELOADABLE_FLAG_COUNT(quic_use_inlining_send_buffer2);
++     return std::make_unique<QuicStreamSendBufferInlining>(allocator);
++   }
++   return std::make_unique<QuicStreamSendBuffer>(allocator);
+++#endif
++ }
++
++}  // namespace

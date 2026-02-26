@@ -1,0 +1,36 @@
+diff --git a/bazel/repositories.bzl b/bazel/repositories.bzl
+--- a/bazel/repositories.bzl
++++ b/bazel/repositories.bzl
+@@ -260,7 +260,11 @@ def envoy_dependencies(skip_targets = []):
+     )
+ 
+ def _boringssl():
+-    external_http_archive(name = "boringssl")
++    external_http_archive(
++        name = "boringssl",
++        patch_args = ["-p1"],
++        patches = ["@envoy//bazel:boringssl_s390x.patch"],
++    )
+ 
+ def _boringssl_fips():
+     external_http_archive(
+diff --git a/bazel/boringssl_s390x.patch b/bazel/boringssl_s390x.patch
+new file mode 100644
+--- /dev/null
++++ b/bazel/boringssl_s390x.patch
+@@ -0,0 +1,15 @@
++diff --git a/include/openssl/target.h b/include/openssl/target.h
++--- a/include/openssl/target.h
+++++ b/include/openssl/target.h
++@@ -53,6 +53,11 @@
++ #define OPENSSL_32_BIT
++ #elif defined(__myriad2__)
++ #define OPENSSL_32_BIT
+++#elif defined(__s390x__) && defined(__linux__)
+++// Local downstream extension for zLinux/s390x builds.
+++#define OPENSSL_64_BIT
+++#define OPENSSL_ASM_INCOMPATIBLE
+++#define OPENSSL_BIG_ENDIAN
++ #else
++ // The list above enumerates the platforms that BoringSSL supports. For these
++ // platforms we keep a reasonable bar of not breaking them: automated test

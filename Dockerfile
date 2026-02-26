@@ -32,15 +32,22 @@ ARG BAZEL_BUILD_OPTS
 ARG DEBUG
 ARG BUILDARCH
 ARG TARGETARCH
+ARG KEEP_BUILDER_FRESH_CACHE=0
 ENV TARGETARCH=$TARGETARCH
 #
 # Clear runner's cache when building deps
 #
-RUN --mount=mode=0777,uid=1337,gid=1337,target=/cilium/proxy/.cache,type=cache,id=$TARGETARCH,sharing=private rm -rf /cilium/proxy/.cache/*
+RUN --mount=mode=0777,uid=1337,gid=1337,target=/cilium/proxy/.cache,type=cache,id=$TARGETARCH \
+    if [ "${KEEP_BUILDER_FRESH_CACHE}" = "1" ]; then \
+        echo "KEEP_BUILDER_FRESH_CACHE=1, preserving /cilium/proxy/.cache"; \
+    else \
+        rm -rf /cilium/proxy/.cache/*; \
+    fi
 #
 # Build dependencies from scratch (no cache mounts, not archive mount)
 #
-RUN BAZEL_BUILD_OPTS="${BAZEL_BUILD_OPTS} --disk_cache=/tmp/bazel-cache" PKG_BUILD=1 V=$V DEBUG=$DEBUG DESTDIR=/tmp/install make bazel-bin/cilium-envoy-starter bazel-bin/cilium-envoy
+RUN if [ "${TARGETARCH}" = "s390x" ]; then export CARGO_BAZEL_GENERATOR_URL="file:///usr/local/bin/cargo-bazel"; fi; \
+    BAZEL_BUILD_OPTS="${BAZEL_BUILD_OPTS} --disk_cache=/tmp/bazel-cache" PKG_BUILD=1 V=$V DEBUG=$DEBUG DESTDIR=/tmp/install make bazel-bin/cilium-envoy-starter bazel-bin/cilium-envoy
 
 # By default this stage picks up the result of the build above, but ARCHIVE_IMAGE can be
 # overridden to point to a saved image of an earlier run of that stage.
@@ -66,11 +73,12 @@ ARG BUILDARCH
 ARG TARGETARCH
 ENV TARGETARCH=$TARGETARCH
 RUN ./bazel/get_workspace_status
-RUN --mount=mode=0777,uid=1337,gid=1337,target=/cilium/proxy/.cache,type=cache,id=$TARGETARCH,sharing=private \
+RUN --mount=mode=0777,uid=1337,gid=1337,target=/cilium/proxy/.cache,type=cache,id=$TARGETARCH \
     --mount=target=/tmp/bazel-cache,source=/tmp/bazel-cache,from=builder-cache,rw \
     if [ -f /tmp/bazel-cache/ENVOY_VERSION ]; then CACHE_ENVOY_VERSION=`cat /tmp/bazel-cache/ENVOY_VERSION`; ENVOY_VERSION=`cat ENVOY_VERSION`; if [ "${CACHE_ENVOY_VERSION}" != "${ENVOY_VERSION}" ]; then echo "Building Envoy ${ENVOY_VERSION} with bazel archive from different Envoy version (${CACHE_ENVOY_VERSION})"; else echo "Building Envoy ${ENVOY_VERSION} with bazel cache of the same version"; fi; else echo "Bazel cache has no ENVOY_VERSION, it may be empty."; fi && \
     touch /tmp/bazel-cache/permissions-check && \
     if [ -n "${COPY_CACHE_EXT}" ]; then PKG_BUILD=1 make BUILD_DEP_HASHES; if [ -f /tmp/bazel-cache/BUILD_DEP_HASHES ] && ! diff BUILD_DEP_HASHES /tmp/bazel-cache/BUILD_DEP_HASHES; then echo "Build dependencies have changed, clearing bazel cache"; rm -rf /tmp/bazel-cache/*; rm -rf /cilium/proxy/.cache/*; fi ; cp BUILD_DEP_HASHES ENVOY_VERSION /tmp/bazel-cache; fi && \
+    if [ "${TARGETARCH}" = "s390x" ]; then export CARGO_BAZEL_GENERATOR_URL="file:///usr/local/bin/cargo-bazel"; fi && \
     BAZEL_BUILD_OPTS="${BAZEL_BUILD_OPTS} --disk_cache=/tmp/bazel-cache" PKG_BUILD=1 V=$V DEBUG=$DEBUG RELEASE_DEBUG=$RELEASE_DEBUG DESTDIR=/tmp/install make install && \
     if [ -n "${COPY_CACHE_EXT}" ]; then cp -ra /tmp/bazel-cache /tmp/bazel-cache${COPY_CACHE_EXT}; ls -la /tmp/bazel-cache${COPY_CACHE_EXT}; fi
 #
@@ -102,7 +110,8 @@ ENV TARGETARCH=$TARGETARCH
 #
 # Check format
 #
-RUN BAZEL_BUILD_OPTS="${BAZEL_BUILD_OPTS}" PKG_BUILD=1 V=$V DEBUG=$DEBUG make V=1 format > format-output.txt
+RUN if [ "${TARGETARCH}" = "s390x" ]; then export CARGO_BAZEL_GENERATOR_URL="file:///usr/local/bin/cargo-bazel"; fi; \
+    BAZEL_BUILD_OPTS="${BAZEL_BUILD_OPTS}" PKG_BUILD=1 V=$V DEBUG=$DEBUG make V=1 format > format-output.txt
 
 FROM scratch AS format
 COPY --from=check-format /cilium/proxy/format-output.txt /
@@ -122,7 +131,7 @@ ENV TARGETARCH=$TARGETARCH
 #
 # Run clang tidy
 #
-RUN --mount=mode=0777,uid=1337,gid=1337,target=/cilium/proxy/.cache,type=cache TIDY_SOURCES="${TIDY_SOURCES}" BAZEL_BUILD_OPTS="${BAZEL_BUILD_OPTS}" PKG_BUILD=1 V=$V DEBUG=$DEBUG make -C b V=1 tidy-fix 2>&1 | tee /cilium/proxy/clang-tidy-output.txt && for file in ${TIDY_SOURCES}; do echo "\$ diff a/$file b/$file"  >> /cilium/proxy/clang-tidy-diff.txt && diff "a/$file" "b/$file" >> /cilium/proxy/clang-tidy-diff.txt || true; done
+RUN --mount=mode=0777,uid=1337,gid=1337,target=/cilium/proxy/.cache,type=cache if [ "${TARGETARCH}" = "s390x" ]; then export CARGO_BAZEL_GENERATOR_URL="file:///usr/local/bin/cargo-bazel"; fi && TIDY_SOURCES="${TIDY_SOURCES}" BAZEL_BUILD_OPTS="${BAZEL_BUILD_OPTS}" PKG_BUILD=1 V=$V DEBUG=$DEBUG make -C b V=1 tidy-fix 2>&1 | tee /cilium/proxy/clang-tidy-output.txt && for file in ${TIDY_SOURCES}; do echo "\$ diff a/$file b/$file"  >> /cilium/proxy/clang-tidy-diff.txt && diff "a/$file" "b/$file" >> /cilium/proxy/clang-tidy-diff.txt || true; done
 
 FROM scratch AS clang-tidy
 COPY --from=run-clang-tidy-fix /cilium/proxy/*.txt /

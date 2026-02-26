@@ -202,11 +202,113 @@ cc_toolchain_config(
     # builtin_sysroot = "/sysroot",
 )
 
+toolchain(
+    name = "s390x_linux_cc_toolchain",
+    exec_compatible_with = ["@platforms//os:linux"],
+    target_compatible_with = [
+        "@platforms//cpu:s390x",
+        "@platforms//os:linux",
+    ],
+    toolchain = ":clang_s390x_linux_cc_toolchain",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+)
+
+cc_toolchain(
+    name = "clang_s390x_linux_cc_toolchain",
+    all_files = ":empty",
+    compiler_files = ":empty",
+    dwp_files = ":empty",
+    linker_files = ":empty",
+    objcopy_files = ":empty",
+    strip_files = ":empty",
+    toolchain_config = ":clang_s390x_linux_toolchain_config",
+)
+
+cc_toolchain_config(
+    name = "clang_s390x_linux_toolchain_config",
+    abi_libc_version = "s390x",
+    abi_version = "s390x",
+    compile_flags = [
+        "--target=s390x-unknown-linux-gnu",
+        "-fuse-ld=lld-18",  # cmake compiler test needs this
+        "-DTOOLCHAIN_MISS_ASM_HWCAP_H",  # highway: asm/hwcap.h may be unavailable in cross libc headers
+        "-DNVALGRIND",  # glib in rules_foreign_cc pulls valgrind macros with unsupported s390x clang asm
+        "-U_FORTIFY_SOURCE",
+        "-fstack-protector",
+        "-Wall",
+        "-Wunused-but-set-parameter",
+        "-Wthread-safety-analysis",
+        "-Wno-free-nonheap-object",
+        "-fno-omit-frame-pointer",
+        # Needed by Envoy dependencies to build:
+        "-Wno-unused-command-line-argument",  # tcmalloc needs this since -fuse-ld was added above
+        "-Wno-deprecated-builtins",
+    ],
+    compiler = "clang",
+    coverage_compile_flags = ["--coverage"],
+    coverage_link_flags = ["--coverage"],
+    cpu = "s390x",
+    cxx_builtin_include_directories = [
+        "/usr/lib/llvm-18",
+        "/usr/s390x-linux-gnu/include",
+        "/usr/include",
+    ],
+    cxx_flags = ["-std=c++0x"],
+    dbg_compile_flags = ["-g"],
+    host_system_name = "local",
+    link_flags = [
+        "--target=s390x-unknown-linux-gnu",
+        "-fuse-ld=lld-18",
+        "-Wl,-no-as-needed",
+        "-Wl,-z,relro,-z,now",
+        "-lm",
+    ],
+    link_libs = ["-l:libstdc++.a"],
+    opt_compile_flags = [
+        "-g0",
+        "-O2",
+        "-D_FORTIFY_SOURCE=1",
+        "-DNDEBUG",
+        "-ffunction-sections",
+        "-fdata-sections",
+    ],
+    opt_link_flags = ["-Wl,--gc-sections"],
+    supports_start_end_lib = True,
+    target_libc = "glibc",
+    target_system_name = "s390x-linux-gnu",
+    tool_paths = {
+        "ar": "/usr/bin/llvm-ar-18",
+        "compat-ld": "/usr/bin/lld-18",
+        "ld": "/usr/bin/lld-18",
+        "gold": "/usr/bin/lld-18",
+        "cpp": "/usr/bin/clang-cpp-18",
+        "gcc": "/usr/bin/clang-18",
+        "dwp": "/usr/bin/llvm-dwp-18",
+        "gcov": "/usr/bin/llvmcov-18",
+        "nm": "/usr/bin/llvm-nm-18",
+        "objcopy": "/usr/bin/llvm-objcopy-18",
+        "objdump": "/usr/bin/llvm-objdump-18",
+        "strip": "/usr/bin/llvm-strip-18",
+    },
+    toolchain_identifier = "linux_s390x",
+    unfiltered_compile_flags = [
+        "-Wno-builtin-macro-redefined",
+        "-D__DATE__=\"redacted\"",
+        "-D__TIMESTAMP__=\"redacted\"",
+        "-D__TIME__=\"redacted\"",
+    ],
+    #
+    # cxx_builtin_include_directories entries need "%sysroot%" prefix if sysroot is set
+    #
+    # builtin_sysroot = "/sysroot",
+)
+
 # still needed to avoid use of local_config_cc toolchain
 cc_toolchain_suite(
     name = "toolchain",
     toolchains = {
         "k8": ":clang_x86_64_linux_cc_toolchain",
         "aarch64": ":clang_aarch64_linux_cc_toolchain",
+        "s390x": ":clang_s390x_linux_cc_toolchain",
     },
 )

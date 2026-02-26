@@ -1,0 +1,32 @@
+diff --git a/bazel/repositories.bzl b/bazel/repositories.bzl
+--- a/bazel/repositories.bzl
++++ b/bazel/repositories.bzl
+@@ -636,6 +636,9 @@ def _com_google_absl():
+     external_http_archive(
+         name = "com_google_absl",
+-        patches = ["@envoy//bazel:abseil.patch"],
++        patches = [
++            "@envoy//bazel:abseil.patch",
++            "@envoy//bazel:abseil_s390x_clang.patch",
++        ],
+         patch_args = ["-p1"],
+         repo_mapping = {"@googletest": "@com_google_googletest"},
+     )
+diff --git a/bazel/abseil_s390x_clang.patch b/bazel/abseil_s390x_clang.patch
+new file mode 100644
+--- /dev/null
++++ b/bazel/abseil_s390x_clang.patch
+@@ -0,0 +1,13 @@
++diff --git a/absl/base/config.h b/absl/base/config.h
++--- a/absl/base/config.h
+++++ b/absl/base/config.h
++@@ -303,7 +303,7 @@
++ #ifdef ABSL_HAVE_INTRINSIC_INT128
++ #error ABSL_HAVE_INTRINSIC_INT128 cannot be directly set
++ #elif defined(__SIZEOF_INT128__)
++-#if (defined(__clang__) && !defined(_WIN32)) ||           \
+++#if (defined(__clang__) && !defined(_WIN32) && !defined(__s390x__)) || \
++     (defined(__CUDACC__) && __CUDACC_VER_MAJOR__ >= 9) || \
++     (defined(__GNUC__) && !defined(__clang__) && !defined(__CUDACC__))
++ #define ABSL_HAVE_INTRINSIC_INT128 1
++ #elif defined(__CUDACC__)

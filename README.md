@@ -32,6 +32,39 @@ as specified in [network
 policies](https://docs.cilium.io/en/latest/concepts/kubernetes/policy/#k8s-policy)
 for the cluster. Cilium proxy is distributed within the Cilium images.
 
+## s390x (zLinux) Fork Status
+
+This fork (`k8ika0s/proxy-s390x`) carries local remediations used to build and
+test `cilium-envoy` on native `linux/s390x`, and to feed validated images into
+`cilium-s390x` runtime testing.
+
+### Highlights
+
+- Added `linux/s390x` Bazel platform/toolchain wiring in `bazel/BUILD` and
+  `bazel/toolchains/BUILD`.
+- Added patch stack `patches/0008` through `patches/0013` for s390x build
+  enablement and BE correctness in key Envoy dependencies.
+- Added Bazel bootstrap fallback on s390x in `tools/install_bazelisk.sh` and
+  `Dockerfile.builder` (Bazel dist build because Bazelisk has no s390x binary).
+- Added podman/buildah-safe defaults in `Makefile.docker` and Dockerfiles
+  (`--network=host`, cache controls, output-mode handling).
+- Added s390x defaults for constrained test execution and proxylib builder
+  fallback so local builds do not depend on missing upstream `linux/s390x`
+  manifests.
+
+### Host Requirements
+
+- Native `s390x` Linux host with Docker or podman/buildah-backed buildx.
+- Sufficient CPU/RAM for large Bazel C++ builds. The make defaults in this
+  fork reduce parallelism on s390x and can be overridden explicitly.
+
+### Quick Build and Test
+
+```bash
+ARCH=s390x make docker-image-envoy
+ARCH=s390x make docker-tests
+```
+
 ## Version compatibility matrix
 
 The following table shows the Cilium proxy version compatibility with supported upstream Cilium versions.
@@ -74,9 +107,9 @@ Dockerfile](https://github.com/cilium/proxy/blob/main/Dockerfile.builder)
 for the required dependencies.
 
 Container builds require Docker Buildkit and optionally Buildx for
-multi-arch builds. Builds are currently only supported for amd64 and
-arm64 targets. For arm64 both native and cross compile on amd64 are
-supported.  Container builds produce container images by
+multi-arch builds. Builds are currently supported for amd64, arm64 and
+s390x targets. For arm64 and s390x both native and cross compile on
+amd64 are supported. Container builds produce container images by
 default. These images can not be run by themselves as they do not
 contain the required runtime dependencies. To run the Cilium proxy the
 binary `/usr/bin/cilium-envoy` needs to be copied from the image to a
@@ -110,12 +143,13 @@ an hour or more. Docker caching will speed up subsequent builds.
 
 Build target architecture can be specified by passing `ARCH`
 environment variable to `make`. Supported values are `amd64` (only on
-amd64 hosts), `arm64` (on arm64 or amd64 hosts), and `multi` (on amd64
-hosts). `multi` builds for all the supported architectures, currrently
-amd64 and arm64:
+amd64 hosts), `arm64` (on arm64 or amd64 hosts), `s390x` (on s390x or
+amd64 hosts), and `multi` (on amd64 hosts). `multi` builds for amd64
+and arm64 by default; set `INCLUDE_S390X=true` to include s390x:
 
 ```
 ARCH=multi make docker-image-envoy
+ARCH=multi INCLUDE_S390X=true make docker-image-envoy
 ```
 
 This will try to push the images to the container registry. Appropriate
@@ -127,12 +161,28 @@ architectures on a single machine. You most likely need to limit the
 number of jobs allowed for each builder, see the note above for
 details.
 
+> On native s390x hosts, Bazelisk upstream binaries are unavailable.
+> The builder bootstraps Bazel from `bazel-<version>-dist.zip` (using
+> distro `bazel-bootstrap` only as the bootstrap toolchain), and keeps
+> the Bazel dist lockfile pinned during bootstrap.
+
 Docker builds are done using Docker Buildx by default when `ARCH` is
 explicitly passed to `make`. You can also force Docker Buildx to be
 used when building for the host platform only (by not defining `ARCH`)
 by defining `DOCKER_BUILDX=1`. A new buildx builder instance will be
 created for amd64 and arm64 cross builds if the current builder is set
-to `default`.
+to `default`. With `INCLUDE_S390X=true`, the builder is also configured
+for s390x.
+
+On native s390x hosts using podman/buildah-backed buildx, the make
+defaults also add `--network=host` and preserve the fresh-builder cache
+(`KEEP_BUILDER_FRESH_CACHE=1`) to avoid known netavark veth and cache
+ownership issues. These remain overridable with explicit make vars.
+
+For `docker-tests` on s390x, the proxylib stage defaults to
+`PROXYLIB_BUILDER=$(BUILDER_BASE)` unless `PROXYLIB_BUILDER` is
+explicitly set, avoiding upstream builder digests that do not publish
+`linux/s390x` manifests.
 
 > Buildx builds will push the build result to
 > `quay.io/cilium/cilium-envoy:<GIT_SHA>` by default. You can change

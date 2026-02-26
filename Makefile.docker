@@ -14,6 +14,8 @@
 
 # Always use buildx
 DOCKER := $(QUIET)DOCKER_BUILDKIT=1 docker buildx
+DOCKER_BUILDX_VERSION := $(shell docker buildx version 2>/dev/null || true)
+DOCKER_BUILDX_IS_PODMAN := $(if $(findstring buildah,$(DOCKER_BUILDX_VERSION)),true,false)
 
 DOCKER_DEV_ACCOUNT ?= quay.io/cilium
 # CACHE_REF ?= docker.io/cilium/cilium-dev:cilium-envoy-cache
@@ -30,10 +32,15 @@ ifeq ($(ARCH),amd64)
   DOCKER_PLATFORMS := --platform=linux/amd64
 else ifeq ($(ARCH),arm64)
   DOCKER_PLATFORMS := --platform=linux/arm64
+else ifeq ($(ARCH),s390x)
+  DOCKER_PLATFORMS := --platform=linux/s390x
 else ifeq ($(ARCH),multi)
   DOCKER_PLATFORMS := --platform=linux/arm64,linux/amd64
+  ifeq ($(INCLUDE_S390X),true)
+    DOCKER_PLATFORMS := --platform=linux/arm64,linux/amd64,linux/s390x
+  endif
 endif
-DOCKER_BUILDER := $(shell docker buildx ls | grep -E -e "[a-zA-Z0-9-]+ \*" | cut -d ' ' -f1)
+DOCKER_BUILDER := $(shell docker buildx ls 2>/dev/null | grep -E -e "[a-zA-Z0-9-]+ \*" | cut -d ' ' -f1)
 ifdef DOCKER_PLATFORMS
   ifneq (,$(filter $(DOCKER_BUILDER),default desktop-linux))
     DOCKER_BUILDKIT_DRIVER :=
@@ -41,7 +48,7 @@ ifdef DOCKER_PLATFORMS
       DOCKER_BUILDKIT_DRIVER := --driver docker-container --driver-opt image=$(DOCKER_BUILDKIT_IMAGE)
     endif
     BUILDER_SETUP := $(shell docker buildx create $(DOCKER_PLATFORMS) $(DOCKER_BUILDKIT_DRIVER) --use)
-    DOCKER_BUILDER := $(shell docker buildx ls | grep -E -e "[a-zA-Z0-9-]+ \*" | cut -d ' ' -f1)
+    DOCKER_BUILDER := $(shell docker buildx ls 2>/dev/null | grep -E -e "[a-zA-Z0-9-]+ \*" | cut -d ' ' -f1)
   endif
 endif
 ifneq ($(DOCKER_BUILDER),default)
@@ -55,8 +62,11 @@ ifneq ($(DOCKER_BUILDER),default)
       # (It's not supported to write multi-arch builds to the local Docker registry)
       DOCKER_BUILD_OPTS += --push
     else
-      # Push to local docker registry by default
-      DOCKER_BUILD_OPTS += --output type=docker
+      # Push to local docker registry by default (docker buildx). Podman/buildah
+      # buildx should not use this mode as it can emit local "type=docker/" artifacts.
+      ifneq ($(DOCKER_BUILDX_IS_PODMAN),true)
+        DOCKER_BUILD_OPTS += --output type=docker
+      endif
     endif
   endif
   DOCKER_BUILD_OPTS += $(DOCKER_PLATFORMS)
@@ -68,6 +78,35 @@ $(info Using Docker Buildx builder "$(DOCKER_BUILDER)" with build flags "$(DOCKE
 
 HYPHEN = -
 ARCH ?= $(subst aarch64,arm64,$(subst x86_64,amd64,$(patsubst i%86,386,$(shell uname -m))))
+# Upstream builder archive image currently lacks linux/s390x manifests.
+# Default to fresh dependency build on s390x unless explicitly overridden.
+ifeq ($(ARCH),s390x)
+  NO_ARCHIVE ?= 1
+  # Podman/buildah buildx on s390x can fail network setup unless host networking is used.
+  ifeq ($(DOCKER_BUILDX_IS_PODMAN),true)
+    ifeq ($(filter --network=host,$(DOCKER_BUILD_OPTS)),)
+      DOCKER_BUILD_OPTS += --network=host
+    endif
+    KEEP_BUILDER_FRESH_CACHE ?= 1
+  endif
+  # Keep test-deps builds within tighter memory/CPU limits on zLinux hosts to
+  # avoid late-stage clang OOM kills during large Envoy test object compiles.
+  ifeq ($(filter command line environment,$(origin EXTRA_BAZEL_BUILD_OPTS)),)
+    EXTRA_BAZEL_BUILD_OPTS += --jobs=1 --local_ram_resources=2048 --local_cpu_resources=1
+  endif
+  ifeq ($(filter command line environment,$(origin BAZEL_TEST_OPTS)),)
+    BAZEL_TEST_OPTS := --jobs=1 --local_ram_resources=2048 --local_cpu_resources=1 --test_timeout=300 --local_test_jobs=1 --flaky_test_attempts=3 --test_output=errors
+  endif
+  # Iteration mode defaults for zLinux:
+  # - avoid forcing Cargo lock repin on every build
+  # - scope tests to known failing TLS/regression targets unless overridden
+  ifeq ($(filter command line environment,$(origin CARGO_BAZEL_REPIN)),)
+    CARGO_BAZEL_REPIN := false
+  endif
+  ifeq ($(filter command line environment,$(origin TEST_TARGETS)),)
+    TEST_TARGETS := //tests:cilium_tls_http_integration_test //tests:cilium_tls_tcp_integration_test //tests:cilium_websocket_encap_integration_test @envoy//test/integration:tcp_proxy_integration_test
+  endif
+endif
 # Add -<arch> suffix if ARCH is not "multi"
 ifeq ($(ARCH),multi)
   ARCH :=
@@ -97,6 +136,19 @@ BUILDER_BASE ?= $(DOCKER_DEV_ACCOUNT)/cilium-envoy-builder:$(BUILDER_BASE_TAG)
 
 BUILD_IMAGE_OPTS := --build-arg BUILDER_BASE="$(BUILDER_BASE)"
 TESTS_IMAGE_OPTS := --build-arg BUILDER_BASE="$(BUILDER_BASE)"
+
+ifeq ($(ARCH),s390x)
+  # Upstream cilium-builder digest used in Dockerfile.tests lacks linux/s390x manifests.
+  # Reuse BUILDER_BASE for proxylib stage unless caller explicitly provides PROXYLIB_BUILDER.
+  PROXYLIB_BUILDER ?= $(BUILDER_BASE)
+endif
+ifneq ($(strip $(PROXYLIB_BUILDER)),)
+  TESTS_IMAGE_OPTS += --build-arg PROXYLIB_BUILDER="$(PROXYLIB_BUILDER)"
+endif
+
+ifneq ($(strip $(KEEP_BUILDER_FRESH_CACHE)),)
+  BUILD_IMAGE_OPTS += --build-arg KEEP_BUILDER_FRESH_CACHE="$(KEEP_BUILDER_FRESH_CACHE)"
+endif
 
 ifdef DEBUG
   BUILD_IMAGE_OPTS += --build-arg DEBUG=$(DEBUG)
@@ -175,10 +227,11 @@ GIT_IGNORE_FILES := $(shell find -H . -not -path "./_build*" -not -path "./vendo
 	echo "/Dockerfile*" >>$@
 	echo "/Makefile.docker" >>$@
 	echo "/README*" >>$@
+	echo "/type=docker/" >>$@
 
 .PHONY: docker-image-builder
 docker-image-builder: Dockerfile.builder SOURCE_VERSION Dockerfile.builder.dockerignore
-	$(DOCKER) build $(DOCKER_BUILD_OPTS) --build-arg BAZEL_BUILD_OPTS="$(EXTRA_BAZEL_BUILD_OPTS)" --build-arg BUILDER_BASE="$(BUILDER_BASE)" -f $< -t $(DOCKER_DEV_ACCOUNT)/cilium-envoy-builder:$(BUILDER_BASE_TAG) .
+	$(DOCKER) build $(DOCKER_BUILD_OPTS) --build-arg BAZEL_BUILD_OPTS="$(EXTRA_BAZEL_BUILD_OPTS)" --build-arg BAZEL_VERSION="$(BAZEL_VERSION)" --build-arg BUILDER_BASE="$(BUILDER_BASE)" -f $< -t $(DOCKER_DEV_ACCOUNT)/cilium-envoy-builder:$(BUILDER_BASE_TAG) .
 
 .PHONY: docker-builder-archive
 docker-builder-archive: Dockerfile SOURCE_VERSION Dockerfile.dockerignore
@@ -186,7 +239,7 @@ docker-builder-archive: Dockerfile SOURCE_VERSION Dockerfile.dockerignore
 
 .PHONY: docker-tests-archive
 docker-tests-archive: Dockerfile.tests SOURCE_VERSION Dockerfile.tests.dockerignore
-	$(DOCKER) build --target builder-archive $(DOCKER_BUILD_OPTS) $(DOCKER_CACHE_OPTS) $(TESTS_IMAGE_OPTS) --build-arg BAZEL_BUILD_OPTS="$(EXTRA_BAZEL_BUILD_OPTS)" --build-arg COPY_CACHE_EXT=.new -f $< -t $(DOCKER_DEV_ACCOUNT)/cilium-envoy-builder:$(TESTS_ARCHIVE_TAG) .
+	$(DOCKER) build --target builder-archive $(DOCKER_BUILD_OPTS) $(DOCKER_CACHE_OPTS) $(TESTS_IMAGE_OPTS) --build-arg BAZEL_BUILD_OPTS="$(EXTRA_BAZEL_BUILD_OPTS)" --build-arg CARGO_BAZEL_REPIN="$(CARGO_BAZEL_REPIN)" --build-arg TEST_TARGETS="$(TEST_TARGETS)" --build-arg COPY_CACHE_EXT=.new -f $< -t $(DOCKER_DEV_ACCOUNT)/cilium-envoy-builder:$(TESTS_ARCHIVE_TAG) .
 
 ifeq ($(BRANCH_TAG),main)
   DOCKER_TESTS_TAGS += -t $(DOCKER_DEV_ACCOUNT)/cilium-envoy:latest$(IMAGE_ARCH)$(DEBUG_TAG)-testlogs
@@ -196,7 +249,7 @@ endif
 
 .PHONY: docker-tests
 docker-tests: Dockerfile.tests SOURCE_VERSION Dockerfile.tests.dockerignore
-	$(DOCKER) build --progress=plain $(subst --push,--load,$(DOCKER_BUILD_OPTS)) $(DOCKER_CACHE_OPTS) $(TESTS_IMAGE_OPTS) --build-arg BAZEL_BUILD_OPTS="$(EXTRA_BAZEL_BUILD_OPTS)" --build-arg BAZEL_TEST_OPTS="$(BAZEL_TEST_OPTS)" -f $< $(DOCKER_TESTS_TAGS) .
+	$(DOCKER) build --progress=plain $(subst --push,--load,$(DOCKER_BUILD_OPTS)) $(DOCKER_CACHE_OPTS) $(TESTS_IMAGE_OPTS) --build-arg BAZEL_BUILD_OPTS="$(EXTRA_BAZEL_BUILD_OPTS)" --build-arg BAZEL_TEST_OPTS="$(BAZEL_TEST_OPTS)" --build-arg CARGO_BAZEL_REPIN="$(CARGO_BAZEL_REPIN)" --build-arg TEST_TARGETS="$(TEST_TARGETS)" -f $< $(DOCKER_TESTS_TAGS) .
 
 ifeq ($(BRANCH_TAG),main)
   DOCKER_IMAGE_ENVOY_TAGS := -t $(DOCKER_DEV_ACCOUNT)/cilium-envoy:$(SOURCE_VERSION)$(IMAGE_ARCH)$(DEBUG_TAG)

@@ -1,0 +1,24 @@
+diff --git a/source/common/tls/context_impl.cc b/source/common/tls/context_impl.cc
+index e32186ddb4..95e74ff718 100644
+--- a/source/common/tls/context_impl.cc
++++ b/source/common/tls/context_impl.cc
+@@ -370,6 +370,7 @@ ContextImpl::ContextImpl(Stats::Scope& scope, const Envoy::Ssl::ContextConfig& c
+       if (!fips_mode) {
+         ENVOY_LOG(warn, "FIPS conformance policy applied on a non-FIPS build");
+       }
++#if defined(BORINGSSL_FIPS)
+       for (auto& tls_context : tls_contexts_) {
+         int rc = SSL_CTX_set_compliance_policy(tls_context.ssl_ctx_.get(),
+                                                ssl_compliance_policy_fips_202205);
+@@ -380,6 +381,11 @@ ContextImpl::ContextImpl(Stats::Scope& scope, const Envoy::Ssl::ContextConfig& c
+           return;
+         }
+       }
++#else
++      creation_status = absl::InvalidArgumentError(
++          "FIPS_202205 compliance policy requires a FIPS-enabled TLS build");
++      return;
++#endif
+       break;
+     default:
+       creation_status = absl::InvalidArgumentError("Unknown compliance policy");

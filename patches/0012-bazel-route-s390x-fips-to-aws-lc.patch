@@ -1,0 +1,51 @@
+diff --git a/bazel/BUILD b/bazel/BUILD
+index 17b80cd744..934d115d57 100644
+--- a/bazel/BUILD
++++ b/bazel/BUILD
+@@ -554,7 +554,8 @@ alias(
+     name = "boringssl",
+     actual = select({
+         "//bazel:boringssl_fips_ppc": "@aws_lc//:ssl",
+-        "//bazel:boringssl_fips_not_ppc": "@boringssl_fips//:ssl",
++        "//bazel:linux_s390x": "@aws_lc//:ssl",
++        "//bazel:boringssl_fips_not_ppc_not_s390x": "@boringssl_fips//:ssl",
+         "//conditions:default": "@boringssl//:ssl",
+     }),
+ )
+@@ -563,7 +564,8 @@ alias(
+     name = "boringcrypto",
+     actual = select({
+         "//bazel:boringssl_fips_ppc": "@aws_lc//:crypto",
+-        "//bazel:boringssl_fips_not_ppc": "@boringssl_fips//:crypto",
++        "//bazel:linux_s390x": "@aws_lc//:crypto",
++        "//bazel:boringssl_fips_not_ppc_not_s390x": "@boringssl_fips//:crypto",
+         "//conditions:default": "@boringssl//:crypto",
+     }),
+ )
+@@ -849,6 +851,26 @@ selects.config_setting_group(
+     ],
+ )
+ 
++selects.config_setting_group(
++    name = "linux_not_s390x",
++    match_any = [
++        ":linux_x86_64",
++        ":linux_aarch64",
++        ":linux_ppc",
++        ":linux_ppc64le",
++        ":linux_mips64",
++    ],
++)
++
++selects.config_setting_group(
++    name = "boringssl_fips_not_ppc_not_s390x",
++    match_all = [
++        ":boringssl_fips",
++        ":not_ppc",
++        ":linux_not_s390x",
++    ],
++)
++
+ selects.config_setting_group(
+     name = "not_x86",
+     match_any = [

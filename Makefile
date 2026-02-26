@@ -26,6 +26,8 @@ BAZEL ?= $(QUIET) bazel
 BAZEL_FILTER ?=
 BAZEL_OPTS ?=
 BAZEL_BUILD_OPTS ?=
+CARGO_BAZEL_REPIN ?= true
+TEST_TARGETS ?= //tests/... @envoy//test/integration:tcp_proxy_integration_test
 ifdef BAZEL_REMOTE_CACHE
   BAZEL_BUILD_OPTS += --remote_cache=$(BAZEL_REMOTE_CACHE)
 endif
@@ -123,7 +125,7 @@ clang.bazelrc: bazel/setup_clang.sh
 .PHONY: bazel-bin/cilium-envoy
 bazel-bin/cilium-envoy: $(COMPILER_DEP) SOURCE_VERSION install-bazelisk
 	@$(ECHO_BAZEL)
-	CARGO_BAZEL_REPIN=true $(BAZEL) $(BAZEL_OPTS) build $(BAZEL_BUILD_OPTS) //:cilium-envoy $(BAZEL_FILTER)
+	CARGO_BAZEL_REPIN=$(CARGO_BAZEL_REPIN) $(BAZEL) $(BAZEL_OPTS) build $(BAZEL_BUILD_OPTS) //:cilium-envoy $(BAZEL_FILTER)
 
 cilium-envoy: bazel-bin/cilium-envoy
 	mv $< $@
@@ -131,7 +133,7 @@ cilium-envoy: bazel-bin/cilium-envoy
 .PHONY: bazel-bin/cilium-envoy-starter
 bazel-bin/cilium-envoy-starter: $(COMPILER_DEP) SOURCE_VERSION install-bazelisk
 	@$(ECHO_BAZEL)
-	CARGO_BAZEL_REPIN=true $(BAZEL) $(BAZEL_OPTS) build $(BAZEL_BUILD_OPTS) //:cilium-envoy-starter $(BAZEL_FILTER)
+	CARGO_BAZEL_REPIN=$(CARGO_BAZEL_REPIN) $(BAZEL) $(BAZEL_OPTS) build $(BAZEL_BUILD_OPTS) //:cilium-envoy-starter $(BAZEL_FILTER)
 
 cilium-envoy-starter: bazel-bin/cilium-envoy-starter
 	mv $< $@
@@ -171,14 +173,14 @@ proxylib/libcilium.so:
 .PHONY: envoy-test-deps
 envoy-test-deps: $(COMPILER_DEP) SOURCE_VERSION proxylib/libcilium.so
 	@$(ECHO_BAZEL)
-	CARGO_BAZEL_REPIN=true $(BAZEL) $(BAZEL_OPTS) build $(BAZEL_BUILD_OPTS) $(BAZEL_TEST_OPTS) //tests/... @envoy//test/integration:tcp_proxy_integration_test $(BAZEL_FILTER)
+	CARGO_BAZEL_REPIN=$(CARGO_BAZEL_REPIN) $(BAZEL) $(BAZEL_OPTS) build $(BAZEL_BUILD_OPTS) $(BAZEL_TEST_OPTS) $(TEST_TARGETS) $(BAZEL_FILTER)
 
 .PHONY: envoy-tests
 envoy-tests: $(COMPILER_DEP) SOURCE_VERSION proxylib/libcilium.so
 	@$(ECHO_BAZEL)
 	# Upstream tcp_proxy_integration_test included to validate that our custom patches
 	# didn't break anything
-	CARGO_BAZEL_REPIN=true $(BAZEL) $(BAZEL_OPTS) test $(BAZEL_BUILD_OPTS) $(BAZEL_TEST_OPTS) //tests/... @envoy//test/integration:tcp_proxy_integration_test $(BAZEL_FILTER)
+	CARGO_BAZEL_REPIN=$(CARGO_BAZEL_REPIN) $(BAZEL) $(BAZEL_OPTS) test $(BAZEL_BUILD_OPTS) $(BAZEL_TEST_OPTS) $(TEST_TARGETS) $(BAZEL_FILTER)
 
 .PHONY: \
 	install \
